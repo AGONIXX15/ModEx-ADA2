@@ -1,0 +1,1 @@
+Checks: 'bugprone-*,performance-*,clang-analyzer-*,modernize-use-nullptr,-bugprone-easily-swappable-parameters'
