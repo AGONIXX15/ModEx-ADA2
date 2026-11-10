@@ -3,11 +3,8 @@
 #include <red.hpp>
 #include <resultado.hpp>
 
+#include <cstddef>
 #include <vector>
-
-long long techo(double x);
-long long esfuerzo(const Red& red, const std::vector<int>& estrategia);
-std::vector<std::vector<int>> generarEstrategias(int n);
 
 class FuerzaBruta {
 public:
@@ -15,6 +12,8 @@ public:
     Resultado solve() const;
 
 private:
+    void explorar(std::size_t i, std::vector<int>& estrategia, Resultado& mejor) const;
+
     const Red& red_;
 };
 

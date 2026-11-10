@@ -1,67 +1,39 @@
 #include <estrategias/fuerzabruta.hpp>
 
-#include <cmath>
 #include <limits>
 
-long long techo(double x) {
-    if (x == static_cast<double>(static_cast<long long>(x))) {
-        return static_cast<long long>(x);
-    }
-    if (x > 0) {
-        return static_cast<long long>(x) + 1;
-    }
-    return static_cast<long long>(x);
-}
-
-long long esfuerzo(const Red& red, const std::vector<int>& estrategia) {
-    long long suma = 0;
-    const std::vector<Agente>& agentes = red.getAgentes();
-    for (std::size_t i = 0; i < agentes.size(); ++i) {
-        double op = agentes[i].getOpinion();
-        double opPrima = op * (1 - estrategia[i]);
-        double rc = agentes[i].getReceptividad();
-        double inf = agentes[i].getInfluencia();
-        suma += techo(std::abs(op - opPrima) * (1 - rc) * inf);
-    }
-    return suma;
-}
-
-std::vector<std::vector<int>> generarEstrategias(int n) {
-    if (n <= 0) {
-        return {{}};
-    }
-    std::vector<std::vector<int>> estrategias = generarEstrategias(n - 1);
-    std::vector<std::vector<int>> resultado;
-    resultado.reserve(estrategias.size() * 2);
-    for (const std::vector<int>& e : estrategias) {
-        std::vector<int> v{1};
-        v.insert(v.end(), e.begin(), e.end());
-        resultado.push_back(std::move(v));
-    }
-    for (const std::vector<int>& e : estrategias) {
-        std::vector<int> v{0};
-        v.insert(v.end(), e.begin(), e.end());
-        resultado.push_back(std::move(v));
-    }
-    return resultado;
-}
+// Genera las 2^n estrategias E = <e0, ..., e(n-1)> fijando e_i = 0 y luego
+// e_i = 1 para cada agente i. Cada estrategia completa se evalua apenas se
+// genera (no se guardan todas en memoria) y se conserva la mejor aplicable.
+// Tiempo O(n * 2^n), espacio O(n).
 
 FuerzaBruta::FuerzaBruta(const Red& red) : red_(red) {}
 
-Resultado FuerzaBruta::solve() const {
-    long long esfuerzoMax = red_.getRmax();
-    std::vector<std::vector<int>> estrategias = generarEstrategias(static_cast<int>(red_.getNumAgentes()));
-    Resultado final{{}, 0, std::numeric_limits<double>::infinity()};
-    for (const std::vector<int>& estrategia : estrategias) {
+void FuerzaBruta::explorar(std::size_t i, std::vector<int>& estrategia, Resultado& mejor) const {
+    if (i == estrategia.size()) {
         long long esf = esfuerzo(red_, estrategia);
-        double extremismo = red_.getExtremismo(estrategia);
-        if (esf <= esfuerzoMax && extremismo < final.extremismo) {
-            final.esfuerzo = esf;
-            final.extremismo = extremismo;
-            final.E = estrategia;
+        if (esf > red_.getRmax()) {
+            return;
         }
+        double ext = red_.getExtremismo(estrategia);
+        bool mejora = ext < mejor.extremismo || (ext == mejor.extremismo && esf < mejor.esfuerzo);
+        if (mejora) {
+            mejor = Resultado{estrategia, esf, ext};
+        }
+        return;
     }
-    return final;
+    estrategia[i] = 0;
+    explorar(i + 1, estrategia, mejor);
+    estrategia[i] = 1;
+    explorar(i + 1, estrategia, mejor);
+    estrategia[i] = 0;
+}
+
+Resultado FuerzaBruta::solve() const {
+    std::vector<int> estrategia(red_.getNumAgentes(), 0);
+    Resultado mejor{{}, 0, std::numeric_limits<double>::infinity()};
+    explorar(0, estrategia, mejor);
+    return mejor;
 }
 
 Resultado modexFB(const Red& red) {

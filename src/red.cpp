@@ -27,6 +27,42 @@ double Red::getExtremismo(const std::vector<int>& estrategia) const {
     return std::sqrt(suma) / static_cast<double>(agentes_.size());
 }
 
+long long techo(double x) {
+    constexpr double tolerancia = 1e-9;
+    return static_cast<long long>(std::ceil(x - tolerancia));
+}
+
+long long costoModerar(const Agente& agente) {
+    double op = agente.getOpinion();
+    return techo(std::abs(op) * (1 - agente.getReceptividad()) * agente.getInfluencia());
+}
+
+double beneficioModerar(const Agente& agente) {
+    double op = agente.getOpinion();
+    return op * op * agente.getInfluencia();
+}
+
+long long esfuerzo(const Red& red, const std::vector<int>& estrategia) {
+    long long suma = 0;
+    const std::vector<Agente>& agentes = red.getAgentes();
+    for (std::size_t i = 0; i < agentes.size(); ++i) {
+        double op = agentes[i].getOpinion();
+        double opPrima = op * (1 - estrategia[i]);
+        double rc = agentes[i].getReceptividad();
+        double inf = agentes[i].getInfluencia();
+        suma += techo(std::abs(op - opPrima) * (1 - rc) * inf);
+    }
+    return suma;
+}
+
+long long esfuerzoTotal(const Red& red) {
+    long long suma = 0;
+    for (const Agente& agente : red.getAgentes()) {
+        suma += costoModerar(agente);
+    }
+    return suma;
+}
+
 namespace {
 
 std::vector<std::string> campos(std::string linea) {
@@ -135,6 +171,28 @@ Red leerRed(const std::filesystem::path& path) {
     } catch (const std::logic_error& e) {
         throw std::runtime_error("Linea " + std::to_string(actual) + ": formato invalido (" + e.what() + ")");
     }
+}
+
+void escribirRed(const std::filesystem::path& path, const Red& red) {
+    std::ofstream archivo(path);
+    if (!archivo) {
+        throw std::runtime_error("No se pudo escribir el archivo: " + path.string());
+    }
+    archivo << std::setprecision(15);
+    archivo << red.getNumAgentes() << '\n';
+    for (const Agente& agente : red.getAgentes()) {
+        archivo << agente.getOpinion() << ',' << agente.getReceptividad() << ',' << agente.getInfluencia() << '\n';
+    }
+    archivo << red.getRmax() << '\n';
+}
+
+std::vector<Agente> generarAgentes(std::size_t n, std::mt19937& generador) {
+    std::vector<Agente> agentes;
+    agentes.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        agentes.push_back(Agente::aleatorio(generador));
+    }
+    return agentes;
 }
 
 void escribirSalida(const std::filesystem::path& path, const Resultado& resultado) {
