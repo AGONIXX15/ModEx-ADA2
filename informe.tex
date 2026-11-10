@@ -1,0 +1,967 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla,es-noshorthands,es-nodecimaldot]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[spanish,ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+
+\newtheorem{teorema}{Teorema}
+\newtheorem{lema}{Lema}
+\newtheorem{proposicion}{Proposición}
+
+\newcommand{\E}[1]{\ensuremath{\langle #1 \rangle}}
+\newcommand{\Ext}{\operatorname{Ext}}
+\newcommand{\Esf}{\operatorname{Esfuerzo}}
+\newcommand{\Mod}{\operatorname{Mod}}
+\newcommand{\Rmax}{R_{\max}}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black}\bfseries,
+  commentstyle=\color{green!40!black},
+  numbers=left,
+  numberstyle=\tiny,
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  language=C++
+}
+
+\title{\textbf{Moderando el extremismo de opiniones en una red social (ModEx)}\\[0.5em]
+\large Proyecto de curso -- Análisis y Diseño de Algoritmos II\\
+Escuela de Ingeniería de Sistemas y Computación}
+% TODO: completar con los nombres y códigos de los integrantes del grupo.
+\author{Integrante 1 (código) \and Integrante 2 (código) \and Integrante 3 (código)\\[0.5em]
+Profesor: Jesús Alexander Aranda \quad Monitor: Samuel Galindo}
+\date{Noviembre de 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+%=====================================================================
+\section{Introducción}
+%=====================================================================
+
+En este informe se estudia el problema ModEx: dada una red social de $n$
+agentes, cada uno con una opinión, una receptividad y una influencia, y un
+valor máximo $\Rmax$ disponible para moderar opiniones, se debe escoger a qué
+agentes moderar (llevar su opinión a $0$) para que el extremismo de la red
+resultante sea mínimo sin superar $\Rmax$.
+
+Se diseñaron, analizaron e implementaron tres soluciones: fuerza bruta
+(\texttt{modexFB}), un algoritmo voraz (\texttt{modexV}) y programación
+dinámica (\texttt{modexPD}). Para cada una se estudia su complejidad y su
+corrección, y al final se comparan experimentalmente y se concluye sobre sus
+ventajas y desventajas en la práctica.
+
+%=====================================================================
+\section{El problema}
+%=====================================================================
+
+\subsection{Formalización}
+
+Una red social es una pareja $RS = \langle AG, \Rmax \rangle$ con
+$AG = \langle a_0,\dots,a_{n-1}\rangle$ y $\Rmax \in \mathbb{N}$. Cada agente
+es una terna $a_i = \langle o_i, r_i, inf_i\rangle$ con
+$o_i \in \{-100,\dots,100\}$, $r_i \in [0,1]$ e $inf_i \in [1,3]$.
+
+El extremismo de la red es
+\[
+  \Ext(RS) = \frac{\sqrt{\sum_{i=0}^{n-1} o_i^2 \cdot inf_i}}{n}.
+\]
+Esta es la lectura de la fórmula que reproduce los valores de los ejemplos
+del enunciado ($47.14$, $33.5$ y $9.43$), y es la que usa la implementación.
+
+Una estrategia es $E = \langle e_0,\dots,e_{n-1}\rangle$ con
+$e_i \in \{0,1\}$; $\Mod(RS,E)$ cambia a $0$ la opinión de los agentes con
+$e_i = 1$. El esfuerzo es
+\[
+  \Esf(RS,E) = \sum_{i=0}^{n-1}\left\lceil |o_i - o_i'| \cdot (1-r_i)\cdot inf_i \right\rceil .
+\]
+$E$ es aplicable si $\Esf(RS,E) \le \Rmax$. ModEx pide una estrategia
+aplicable que minimice $\Ext(\Mod(RS,E))$.
+
+\subsection{Reformulación: una mochila 0/1}
+\label{sec:mochila}
+
+Para cada agente definimos su \emph{costo} y su \emph{beneficio}:
+\[
+  c_i = \left\lceil |o_i|\cdot(1-r_i)\cdot inf_i \right\rceil ,
+  \qquad
+  b_i = o_i^2 \cdot inf_i .
+\]
+Si $e_i = 0$ entonces $o_i' = o_i$ y el término del esfuerzo es
+$\lceil 0 \rceil = 0$; si $e_i = 1$ entonces $o_i' = 0$ y el término es $c_i$.
+Por lo tanto
+\[
+  \Esf(RS,E) = \sum_{i} e_i\, c_i ,
+  \qquad
+  \Ext(\Mod(RS,E)) = \frac{\sqrt{S - B(E)}}{n},
+  \quad\text{con } S = \sum_i b_i,\; B(E) = \sum_i e_i\, b_i .
+\]
+Como $x \mapsto \sqrt{S-x}/n$ es decreciente, \textbf{minimizar el extremismo
+equivale a maximizar $B(E)$ sujeto a $\sum_i e_i c_i \le \Rmax$}: es
+exactamente el problema de la mochila 0/1, donde los agentes son los objetos,
+$c_i$ su peso, $b_i$ su valor y $\Rmax$ la capacidad. Esta observación guía el
+diseño del algoritmo voraz y del de programación dinámica.
+
+Dos cotas útiles: como $|o_i| \le 100$, $1-r_i \le 1$ e $inf_i \le 3$, se
+tiene $0 \le c_i \le 300$ y por lo tanto $\sum_i c_i \le 300n$.
+
+Además, la estrategia $E = \langle 0,\dots,0\rangle$ tiene esfuerzo $0 \le
+\Rmax$, así que \textbf{siempre existe al menos una estrategia aplicable}.
+
+\subsection{Ejemplos del enunciado}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Red & Agente & $\langle o, r, inf\rangle$ & $c_i$ & $b_i$ \\
+\midrule
+\multirow{3}{*}{$RS_1$, $\Rmax = 55$}
+ & $a_0$ & $\langle 100, 0.5, 1\rangle$ & 50 & 10000 \\
+ & $a_1$ & $\langle 100, 0.1, 1\rangle$ & 90 & 10000 \\
+ & $a_2$ & $\langle -10, 0.1, 1\rangle$ & 9  & 100 \\
+\midrule
+\multirow{3}{*}{$RS_2$, $\Rmax = 35$}
+ & $a_0$ & $\langle -30, 0.9, 1\rangle$ & 3  & 900 \\
+ & $a_1$ & $\langle 20, 0.1, 2\rangle$  & 36 & 800 \\
+ & $a_2$ & $\langle 50, 0.5, 1\rangle$  & 25 & 2500 \\
+\bottomrule
+\end{tabular}
+\caption{Costos y beneficios de los agentes de los ejemplos 2.3.1 y 2.3.2.}
+\label{tab:ejemplos}
+\end{table}
+
+En $RS_1$ las estrategias aplicables no vacías son $\E{1,0,0}$
+($\Ext = 33.50$) y $\E{0,0,1}$ ($\Ext = 47.14$); $\E{1,0,1}$ cuesta $59 > 55$ y
+cualquier estrategia que modere a $a_1$ cuesta al menos $90$. El óptimo es
+$\E{1,0,0}$ con esfuerzo $50$ y extremismo $33.50$.
+
+En $RS_2$ el óptimo es $\E{1,0,1}$ con esfuerzo $28$ y extremismo
+$\sqrt{800}/3 = 9.43$: moderar a $a_1$ cuesta $36 > 35$, así que solo se
+pueden moderar subconjuntos de $\{a_0, a_2\}$ y moderar a ambos es lo mejor.
+
+%=====================================================================
+\section{Fuerza bruta}
+%=====================================================================
+
+El algoritmo genera todas las estrategias posibles y entre ellas escoge la
+mejor aplicable. Las estrategias se generan recursivamente fijando $e_i = 0$ y
+luego $e_i = 1$ para cada agente; cada estrategia completa se evalúa apenas se
+genera, de modo que no es necesario guardar las $2^n$ estrategias en memoria.
+
+\begin{algorithm}[h]
+\caption{Fuerza bruta (\texttt{modexFB})}
+\SetKwFunction{Explorar}{Explorar}
+\SetKwProg{Fn}{Función}{:}{}
+\KwIn{Red $RS = \langle AG, \Rmax\rangle$ con $n$ agentes}
+\KwOut{$(E, \Esf(RS,E), \Ext(\Mod(RS,E)))$ óptima}
+$E \gets \langle 0,\dots,0\rangle$; $\mathit{mejor} \gets (\emptyset, 0, +\infty)$\;
+\Explorar{$0$}\;
+\Return $\mathit{mejor}$\;
+\BlankLine
+\Fn{\Explorar{$i$}}{
+  \eIf{$i = n$}{
+    $\mathit{esf} \gets \Esf(RS, E)$\tcp*{$O(n)$}
+    \If{$\mathit{esf} \le \Rmax$}{
+      $\mathit{ext} \gets \Ext(\Mod(RS,E))$\tcp*{$O(n)$}
+      \If{$\mathit{ext} < \mathit{mejor}.\mathit{ext}$ \textbf{o} ($\mathit{ext} = \mathit{mejor}.\mathit{ext}$ \textbf{y} $\mathit{esf} < \mathit{mejor}.\mathit{esf}$)}{
+        $\mathit{mejor} \gets (E, \mathit{esf}, \mathit{ext})$\;
+      }
+    }
+  }{
+    $e_i \gets 0$; \Explorar{$i+1$}\;
+    $e_i \gets 1$; \Explorar{$i+1$}\;
+    $e_i \gets 0$\;
+  }
+}
+\end{algorithm}
+
+\subsection{Complejidad}
+
+El árbol de recursión es un árbol binario completo de altura $n$: tiene $2^n$
+hojas (una por estrategia) y $2^n - 1$ nodos internos. Cada nodo interno hace
+trabajo constante y cada hoja calcula el esfuerzo y el extremismo en $O(n)$.
+Equivalentemente, $T(n)$ cumple $T(i) = 2T(i+1) + O(1)$ para $i < n$ y
+$T(n) = O(n)$ en las hojas, de donde
+\[
+  T(n) = (2^n - 1)\cdot O(1) + 2^n \cdot O(n) = \Theta(n \cdot 2^n).
+\]
+En espacio, la profundidad de la recursión es $n$ y solo se guardan la
+estrategia actual y la mejor, por lo que el espacio es $\Theta(n)$.
+
+Una primera versión del código construía la lista completa de las $2^n$
+estrategias antes de evaluarlas, lo que requería $\Theta(n\cdot 2^n)$ de
+memoria (unos 190 MB para $n = 20$). Se reemplazó por la exploración
+recursiva descrita, que tiene el mismo orden de tiempo y espacio lineal.
+
+\subsection{Corrección}
+
+\textbf{Sí, el algoritmo siempre da la respuesta correcta.} Toda estrategia de
+moderación es una secuencia de $n$ bits, y la recursión visita cada una de las
+$2^n$ secuencias exactamente una vez (en cada nivel $i$ se toman las dos
+opciones de $e_i$). Entre ellas descarta solo las no aplicables y conserva la
+de menor extremismo. Como $\E{0,\dots,0}$ siempre es aplicable, el conjunto de
+candidatas no es vacío y el resultado es una estrategia aplicable de
+extremismo mínimo. En caso de empate en extremismo se prefiere la de menor
+esfuerzo, lo que no afecta la optimalidad.
+
+\paragraph{Detalle de implementación: el redondeo.} El esfuerzo se calcula con
+números de punto flotante, donde por ejemplo $1 - 0.7 = 0.30000000000000004$.
+Para el agente $\langle 10, 0.7, 1\rangle$ el valor exacto es
+$\lceil 10\cdot 0.3 \cdot 1\rceil = 3$, pero aplicar \texttt{ceil}
+directamente da $4$, con lo que una estrategia aplicable (por ejemplo con
+$\Rmax = 3$) se descartaría. La función \texttt{techo} resta una tolerancia de
+$10^{-9}$ antes de aplicar \texttt{ceil}, muy inferior a la precisión de los
+datos de entrada. Este caso está incluido en las pruebas (caso $E_7$ de la
+tabla~\ref{tab:voraz}).
+
+%=====================================================================
+\section{Algoritmo voraz}
+%=====================================================================
+
+\subsection{Descripción del algoritmo}
+
+Por la reformulación de la sección~\ref{sec:mochila}, cada agente aporta un
+beneficio $b_i$ (reducción de $S$) a cambio de un costo $c_i$. La idea voraz
+es moderar primero a los agentes que más reducen el extremismo \emph{por
+unidad de esfuerzo}, es decir, los de mayor razón $b_i / c_i$:
+
+\begin{enumerate}
+  \item Descartar los agentes con $b_i = 0$ (opinión $0$, no aportan) y los
+        que cuestan más que $\Rmax$ (nunca pueden moderarse).
+  \item Ordenar los agentes restantes por $b_i/c_i$ de mayor a menor. Los de
+        costo $0$ (receptividad $1$) tienen razón $+\infty$ y van primero; los
+        empates se rompen por mayor beneficio.
+  \item Recorrer la lista en ese orden y moderar a cada agente cuyo costo aún
+        quepa en el presupuesto restante. El recorrido no se detiene en el
+        primer agente que no cabe: sigue buscando agentes más baratos.
+  \item Repetir el paso 3 empezando con el agente de mayor beneficio
+        $b_{\max}$ ya moderado, y quedarse con la mejor de las dos soluciones.
+\end{enumerate}
+
+El paso 4 corrige el caso en que la razón favorece a agentes baratos pero
+poco extremos que consumen el presupuesto que necesitaba un agente muy
+extremo (caso $E_4$ de la tabla~\ref{tab:voraz}). Cuesta solo un recorrido
+adicional y, como se demuestra en la sección~\ref{sec:voraz-correccion}, da
+una garantía de calidad que el paso 3 solo no tiene.
+
+\begin{algorithm}[h]
+\caption{Algoritmo voraz (\texttt{modexV})}
+\SetKwFunction{Llenar}{Llenar}
+\SetKwProg{Fn}{Función}{:}{}
+\KwIn{Red $RS = \langle AG, \Rmax\rangle$ con $n$ agentes}
+\KwOut{$(E, \Esf(RS,E), \Ext(\Mod(RS,E)))$}
+$L \gets \{\, i : b_i > 0 \text{ y } c_i \le \Rmax \,\}$\;
+ordenar $L$ por $b_i/c_i$ descendente (razón $+\infty$ si $c_i = 0$)\;
+$E \gets \langle 0,\dots,0\rangle$; $(E, B) \gets$ \Llenar{$E$, $0$, $0$}\;
+$m \gets \arg\max_{i \in L} b_i$\;
+\If{$L \neq \emptyset$ \textbf{y} $e_m = 0$}{
+  $E' \gets \langle 0,\dots,0\rangle$; $e'_m \gets 1$\;
+  $(E', B') \gets$ \Llenar{$E'$, $c_m$, $b_m$}\;
+  \lIf{$B' > B$}{$E \gets E'$}
+}
+\Return $(E, \Esf(RS,E), \Ext(\Mod(RS,E)))$\;
+\BlankLine
+\Fn{\Llenar{$E$, $\mathit{usado}$, $B$}}{
+  \For{$i \in L$ en orden}{
+    \If{$e_i = 0$ \textbf{y} $\mathit{usado} + c_i \le \Rmax$}{
+      $e_i \gets 1$; $\mathit{usado} \gets \mathit{usado} + c_i$; $B \gets B + b_i$\;
+    }
+  }
+  \Return $(E, B)$\;
+}
+\end{algorithm}
+
+\subsection{Entendimos el algoritmo}
+
+\paragraph{Ejemplo 2.3.1 ($RS_1$, $\Rmax = 55$).} Las razones son
+$a_0: 10000/50 = 200$, $a_1: 10000/90 = 111.1$ y $a_2: 100/9 = 11.1$, pero
+$a_1$ se descarta porque $c_1 = 90 > 55$. El orden es $a_0, a_2$. Se modera a
+$a_0$ (usado $= 50$); $a_2$ no cabe ($59 > 55$). En el paso 4, el agente de
+mayor beneficio es $a_0$, que ya está moderado. La salida es $E = \E{1,0,0}$,
+con esfuerzo $50$ y extremismo $\sqrt{10100}/3 = 33.50$. \textbf{Es la
+solución óptima.}
+
+\paragraph{Ejemplo 2.3.2 ($RS_2$, $\Rmax = 35$).} Se descarta $a_1$
+($c_1 = 36 > 35$). Las razones son $a_0: 900/3 = 300$ y $a_2: 2500/25 = 100$.
+Se modera a $a_0$ (usado $= 3$) y luego a $a_2$ (usado $= 28$). En el paso 4,
+el de mayor beneficio es $a_2$, ya moderado. La salida es $E = \E{1,0,1}$,
+con esfuerzo $28$ y extremismo $\sqrt{800}/3 = 9.43$. \textbf{Es la solución
+óptima.}
+
+\paragraph{Otras entradas.} Se diseñaron seis entradas adicionales, cada una
+para ejercitar una situación distinta (tabla~\ref{tab:entradas}). La
+tabla~\ref{tab:voraz} compara la salida del voraz con el óptimo, calculado con
+fuerza bruta y confirmado con programación dinámica.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcp{6.6cm}p{4.4cm}}
+\toprule
+Caso & $\Rmax$ & Agentes $\langle o, r, inf\rangle$ & Propósito \\
+\midrule
+$E_1$ & 55  & $\langle 100,0.5,1\rangle,\langle 100,0.1,1\rangle,\langle -10,0.1,1\rangle$ & Ejemplo 2.3.1 \\
+$E_2$ & 35  & $\langle -30,0.9,1\rangle,\langle 20,0.1,2\rangle,\langle 50,0.5,1\rangle$ & Ejemplo 2.3.2 \\
+$E_3$ & 10  & $\langle 60,0.9,1\rangle,\langle 50,0.9,1\rangle,\langle 50,0.9,1\rangle$ & Contraejemplo del voraz \\
+$E_4$ & 50  & $\langle 20,0.95,1\rangle,\langle 100,0.5,1\rangle$ & Necesidad del paso 4 \\
+$E_5$ & 0   & $\langle 80,1,2\rangle,\langle -50,0.2,1.5\rangle,\langle 0,0.3,3\rangle,\langle 30,0.6,1\rangle$ & $\Rmax=0$, costo $0$ y opinión $0$ \\
+$E_6$ & 500 & $\langle -100,0.2,3\rangle,\langle 80,0.6,2\rangle,\langle -20,0,1.2\rangle$ & Alcanza para todos \\
+$E_7$ & 3   & $\langle 10,0.7,1\rangle,\langle -50,0.5,1\rangle$ & Redondeo de punto flotante \\
+$E_8$ & 90  & $\langle 90,0.5,1\rangle,\langle -60,0.5,1\rangle,\langle -60,0.5,1\rangle,\langle 40,0,1\rangle,\langle -70,0.4,2\rangle$ & Óptimos empatados \\
+\bottomrule
+\end{tabular}
+\caption{Entradas diseñadas para analizar el algoritmo voraz.}
+\label{tab:entradas}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcccccccc}
+\toprule
+ & \multicolumn{3}{c}{Voraz} & \multicolumn{3}{c}{Óptimo (FB = PD)} & \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Caso & $E$ & Esf & Ext & $E$ & Esf & Ext & ¿Óptima? \\
+\midrule
+$E_1$ & \E{1,0,0} & 50 & 33.4996 & \E{1,0,0} & 50 & 33.4996 & Sí \\
+$E_2$ & \E{1,0,1} & 28 & 9.4281  & \E{1,0,1} & 28 & 9.4281  & Sí \\
+$E_3$ & \E{1,0,0} & 6  & 23.5702 & \E{0,1,1} & 10 & 20.0000 & \textbf{No} \\
+$E_4$ & \E{0,1}   & 50 & 10.0000 & \E{0,1}   & 50 & 10.0000 & Sí \\
+$E_5$ & \E{1,0,0,0} & 0 & 17.0477 & \E{1,0,0,0} & 0 & 17.0477 & Sí \\
+$E_6$ & \E{1,1,1} & 328 & 0.0000 & \E{1,1,1} & 328 & 0.0000 & Sí \\
+$E_7$ & \E{1,0}   & 3  & 25.0000 & \E{1,0}   & 3  & 25.0000 & Sí \\
+$E_8$ & \E{1,1,0,0,0} & 75 & 24.4949 & \E{1,0,1,0,0} & 75 & 24.4949 & Sí (empate) \\
+\bottomrule
+\end{tabular}
+\caption{Salida del algoritmo voraz frente a la solución óptima.}
+\label{tab:voraz}
+\end{table}
+
+Comentarios sobre los casos:
+\begin{itemize}
+  \item $E_3$: costos $6, 5, 5$; beneficios $3600, 2500, 2500$; razones
+        $600, 500, 500$. El voraz modera a $a_0$ y le sobran $4$ unidades en
+        las que no cabe nadie. El paso 4 empieza también por $a_0$ (mayor
+        beneficio). El óptimo modera a $a_1$ y $a_2$ usando todo el
+        presupuesto: $B = 5000 > 3600$.
+  \item $E_4$: $a_0$ tiene costo $1$ y razón $400$; $a_1$ tiene costo $50$ y
+        razón $200$. El paso 3 modera a $a_0$ y ya no cabe $a_1$
+        ($B = 400$). El paso 4 empieza por $a_1$ ($B = 10000$) y obtiene el
+        óptimo. Sin el paso 4 el extremismo sería $50$ en lugar de $10$.
+  \item $E_5$: con $\Rmax = 0$ solo se puede moderar al agente de
+        receptividad $1$ (costo $0$). El agente de opinión $0$ no se modera
+        porque no aporta beneficio.
+  \item $E_7$: sin la tolerancia de \texttt{techo} el costo de $a_0$ sería
+        $4 > 3$ y ningún algoritmo lo moderaría.
+  \item $E_8$: $\{a_0,a_1\}$ y $\{a_0,a_2\}$ son óptimos (los dos agentes de
+        opinión $-60$ son idénticos); los algoritmos devuelven estrategias
+        distintas con el mismo esfuerzo y extremismo.
+\end{itemize}
+
+\subsection{Complejidad}
+
+Calcular $c_i$ y $b_i$ y filtrar es $O(n)$. Ordenar $|L| \le n$ agentes es
+$O(n \log n)$. Cada llamada a \texttt{Llenar} recorre la lista una vez,
+$O(n)$, y se hacen a lo sumo dos. Encontrar $b_{\max}$ y calcular el esfuerzo
+y el extremismo finales es $O(n)$. En total
+\[
+  T(n) = O(n) + O(n\log n) + 2\cdot O(n) = \Theta(n \log n),
+\]
+dominado por el ordenamiento. El espacio es $\Theta(n)$ (la lista ordenada y
+dos estrategias).
+
+\subsection{Corrección}
+\label{sec:voraz-correccion}
+
+\textbf{No, el algoritmo voraz no siempre da la respuesta correcta.} El caso
+$E_3$ es un contraejemplo verificado: el voraz entrega extremismo $23.57$ y el
+óptimo es $20$. El motivo es que ModEx es una mochila 0/1, que no tiene la
+propiedad de elección voraz: escoger al agente de mejor razón puede dejar
+presupuesto sin usar que ningún otro agente alcanza a aprovechar. Ordenar por
+razón solo es óptimo en la versión fraccionaria, donde se podría moderar una
+fracción de un agente.
+
+\paragraph{Cuándo sí da la respuesta correcta.}
+\begin{enumerate}
+  \item Si alcanza para todos ($\sum_i c_i \le \Rmax$): modera a todos los
+        agentes con $b_i > 0$, lo que da extremismo $0$ (caso $E_6$).
+  \item Si $\Rmax = 0$: solo pueden moderarse agentes de costo $0$, y los
+        modera a todos (caso $E_5$).
+  \item Si todos los costos son iguales: el orden por razón coincide con el
+        orden por beneficio y modera a los $\lfloor \Rmax / c\rfloor$ de mayor
+        beneficio, que es óptimo.
+  \item Si todos los beneficios son iguales: el orden por razón es el de menor
+        costo, que maximiza la cantidad de agentes moderados, lo que es
+        óptimo.
+  \item Si los agentes moderados en el paso 3 son exactamente los primeros de
+        la lista ordenada y su costo suma exactamente $\Rmax$: la solución
+        alcanza la cota de la mochila fraccionaria y nada puede superarla.
+\end{enumerate}
+
+\paragraph{Cuándo no.} Falla cuando, tras moderar a los agentes de mejor
+razón, queda presupuesto ``desperdiciado'' que una combinación distinta, de
+razón individual menor, sí aprovecharía (caso $E_3$). Esto ocurre con más
+frecuencia cuando hay pocos agentes con costos grandes respecto a $\Rmax$.
+
+\begin{proposicion}
+Sea $B^*$ el beneficio óptimo y $B_V$ el beneficio de la solución del voraz.
+Entonces $B_V \ge B^*/2$.
+\end{proposicion}
+\begin{proof}
+Sean $u_1,\dots,u_m$ los agentes de $L$ en el orden por razón. Si todos caben,
+el paso 3 los modera a todos y es óptimo. Si no, sea $u_k$ el primero que no
+cabe en el paso 3; los anteriores $u_1,\dots,u_{k-1}$ sí fueron moderados, así
+que $B_3 \ge \sum_{l<k} b_{u_l}$. El óptimo de la mochila fraccionaria toma
+$u_1,\dots,u_{k-1}$ y una fracción de $u_k$, luego
+$B^* \le \sum_{l<k} b_{u_l} + b_{u_k} \le B_3 + b_{\max}$. El paso 4 parte del
+agente de beneficio $b_{\max}$, así que $B_4 \ge b_{\max}$ (si ese agente ya
+fue moderado en el paso 3, entonces $B_3 \ge b_{\max}$). Por lo tanto
+$B_V = \max(B_3, B_4) \ge (B_3 + b_{\max})/2 \ge B^*/2$.
+\end{proof}
+
+Sin el paso 4 no hay garantía: con un agente de costo $1$ y beneficio $2$ y
+otro de costo $\Rmax$ y beneficio $\Rmax$, el paso 3 solo obtendría $2$
+frente a un óptimo de $\Rmax$, arbitrariamente peor (el caso $E_4$ es una
+instancia de esta situación). La garantía
+es sobre la reducción $B$, no sobre el extremismo: si el óptimo deja la red
+casi sin extremismo, el error relativo en $\Ext$ puede ser grande (en las
+pruebas aleatorias llegó al $206\%$ en un caso donde el óptimo era cercano a
+$0$).
+
+La tabla~\ref{tab:aleatorio} resume el comportamiento observado en
+$3600$ redes aleatorias: el voraz entrega el óptimo exacto en la mayoría de
+los casos pequeños, y aunque la proporción de óptimos exactos baja al crecer
+$n$, el error relativo promedio en el extremismo cae a menos de $0.01\%$
+para $n = 1000$, porque con muchos agentes el presupuesto desperdiciado es
+pequeño frente al total.
+
+%=====================================================================
+\section{Programación dinámica}
+%=====================================================================
+
+\subsection{Caracterización de la estructura de una solución óptima}
+
+Consideremos el subproblema $P(i, j)$: \emph{escoger qué agentes moderar entre
+los primeros $i$ agentes $a_0,\dots,a_{i-1}$ con un esfuerzo de a lo sumo
+$j$, maximizando el beneficio moderado}. El problema original es $P(n,\Rmax)$.
+
+\begin{lema}[Subestructura óptima]
+Sea $E^* = \langle e_0,\dots,e_{i-1}\rangle$ una solución óptima de
+$P(i,j)$ con $i \ge 1$.
+\begin{itemize}
+  \item Si $e_{i-1} = 0$, entonces $\langle e_0,\dots,e_{i-2}\rangle$ es una
+        solución óptima de $P(i-1, j)$.
+  \item Si $e_{i-1} = 1$, entonces $c_{i-1} \le j$ y
+        $\langle e_0,\dots,e_{i-2}\rangle$ es una solución óptima de
+        $P(i-1, j - c_{i-1})$.
+\end{itemize}
+\end{lema}
+\begin{proof}
+Caso $e_{i-1} = 0$: el prefijo usa esfuerzo $\le j$ y solo agentes entre
+$a_0,\dots,a_{i-2}$, luego es solución de $P(i-1,j)$. Si existiera una
+solución de $P(i-1,j)$ con mayor beneficio, al agregarle $e_{i-1}=0$ se
+obtendría una solución de $P(i,j)$ mejor que $E^*$, una contradicción.
+
+Caso $e_{i-1} = 1$: como el esfuerzo total es $\le j$ y $a_{i-1}$ aporta
+$c_{i-1}$, el prefijo usa a lo sumo $j - c_{i-1}$. Si existiera una solución
+de $P(i-1, j-c_{i-1})$ con mayor beneficio, al agregarle $e_{i-1}=1$ se
+tendría una solución de $P(i,j)$ con esfuerzo $\le j$ y beneficio mayor que
+el de $E^*$, una contradicción.
+\end{proof}
+
+Así, una solución óptima de $P(i,j)$ se construye a partir de una solución
+óptima de $P(i-1,j)$ o de $P(i-1,j-c_{i-1})$. Los subproblemas necesarios son
+\[
+  \{\, P(i,j) : 0 \le i \le n,\; 0 \le j \le A \,\},
+  \qquad A = \min\!\left(\Rmax,\ \sum_i c_i\right).
+\]
+Basta llegar hasta $A$ en lugar de $\Rmax$: con un presupuesto mayor que el
+costo de moderar a todos, el presupuesto deja de ser una restricción. Hay
+$(n+1)(A+1)$ subproblemas, y como $A \le 300n$, son $O(n^2)$.
+
+\subsection{Definición recursiva del valor de una solución óptima}
+
+Sea $M(i,j)$ el máximo beneficio de $P(i,j)$:
+\[
+  M(i,j) =
+  \begin{cases}
+    0 & \text{si } i = 0,\\[2pt]
+    M(i-1, j) & \text{si } i > 0 \text{ y } c_{i-1} > j,\\[2pt]
+    \max\bigl( M(i-1,j),\ M(i-1, j - c_{i-1}) + b_{i-1} \bigr) & \text{si } i > 0 \text{ y } c_{i-1} \le j.
+  \end{cases}
+\]
+El costo (extremismo) de una solución óptima del problema original es
+\[
+  \Ext^* = \frac{\sqrt{S - M(n, A)}}{n}, \qquad S = \sum_i b_i .
+\]
+De manera equivalente, el extremismo restante mínimo
+$X(i,j) = \sum_{l<i} b_l - M(i,j)$ satisface $X(0,j) = 0$,
+$X(i,j) = X(i-1,j) + b_{i-1}$ si $c_{i-1} > j$ y
+$X(i,j) = \min\bigl(X(i-1,j) + b_{i-1},\ X(i-1,j-c_{i-1})\bigr)$ en otro caso,
+con $\Ext^* = \sqrt{X(n,A)}/n$.
+
+\subsection{Algoritmo para calcular el costo de una solución óptima}
+
+La fila $i$ de $M$ solo depende de la fila $i-1$, así que la tabla se llena
+de abajo hacia arriba, fila por fila:
+
+\begin{algorithm}[h]
+\caption{Costo óptimo por programación dinámica}
+\label{alg:pd-costo}
+\KwIn{Red $RS$ con $n$ agentes}
+\KwOut{$\Ext^*$}
+calcular $c_i$ y $b_i$ para $0 \le i < n$; $S \gets \sum_i b_i$\;
+$A \gets \min(\Rmax, \sum_i c_i)$\;
+\lFor{$j \gets 0$ \KwTo $A$}{$M[0][j] \gets 0$}
+\For{$i \gets 1$ \KwTo $n$}{
+  \For{$j \gets 0$ \KwTo $A$}{
+    $M[i][j] \gets M[i-1][j]$\;
+    \If{$c_{i-1} \le j$ \textbf{y} $M[i-1][j-c_{i-1}] + b_{i-1} > M[i][j]$}{
+      $M[i][j] \gets M[i-1][j-c_{i-1}] + b_{i-1}$\;
+    }
+  }
+}
+\Return $\sqrt{S - M[n][A]}\,/\,n$\;
+\end{algorithm}
+
+\subsection{Algoritmo para calcular una solución óptima}
+
+Se agrega una tabla de decisiones $D[i][j] \in \{0,1\}$ con $D[i][j] = 1$ si
+y solo si el valor $M[i][j]$ se obtuvo moderando a $a_{i-1}$ (es decir, si en
+el algoritmo~\ref{alg:pd-costo} se ejecutó la línea de la condición). Luego
+se recorre la tabla desde $(n, A)$ hacia atrás:
+
+\begin{algorithm}[h]
+\caption{Reconstrucción de una estrategia óptima}
+\KwIn{Tabla $D$, costos $c_i$, $n$, $A$}
+\KwOut{Estrategia óptima $E$}
+$E \gets \langle 0,\dots,0\rangle$; $j \gets A$\;
+\For{$i \gets n$ \textbf{bajando hasta} $1$}{
+  \If{$D[i][j] = 1$}{
+    $e_{i-1} \gets 1$; $j \gets j - c_{i-1}$\;
+  }
+}
+\Return $(E, \Esf(RS,E), \Ext(\Mod(RS,E)))$\;
+\end{algorithm}
+
+En cada paso, si $D[i][j] = 1$ el óptimo de $P(i,j)$ modera a $a_{i-1}$ y
+continúa en $P(i-1, j - c_{i-1})$; si no, continúa en $P(i-1, j)$. Por el
+lema de subestructura óptima, la estrategia construida tiene beneficio
+$M(n,A)$ y es óptima. La reconstrucción toma $O(n)$.
+
+\paragraph{En la implementación.} Como la fila $i$ solo depende de la fila
+$i-1$, \texttt{modexPD} guarda los valores en un solo arreglo de $A+1$ reales
+que se recorre con $j$ de $A$ hacia $0$ (así $M[j - c]$ todavía corresponde a
+la fila anterior), y la tabla $D$ como una matriz de bits
+(\texttt{std::vector<bool>}). El núcleo del algoritmo es:
+
+\begin{lstlisting}
+std::vector<double> M(A + 1, 0.0);
+std::vector<std::vector<bool>> moderar(n, std::vector<bool>(A + 1, false));
+for (std::size_t i = 0; i < n; ++i) {
+    const auto c = static_cast<std::size_t>(costo[i]);
+    if (c > A) continue;
+    for (std::size_t j = A + 1; j-- > c;) {
+        double conAgente = M[j - c] + beneficio[i];
+        if (conAgente > M[j]) {
+            M[j] = conAgente;
+            moderar[i][j] = true;
+        }
+    }
+}
+std::vector<int> E(n, 0);
+std::size_t j = A;
+for (std::size_t i = n; i-- > 0;) {
+    if (moderar[i][j]) {
+        E[i] = 1;
+        j -= static_cast<std::size_t>(costo[i]);
+    }
+}
+\end{lstlisting}
+
+\subsection{Complejidad}
+
+\paragraph{Complejidad en tiempo.} Calcular costos y beneficios es $O(n)$.
+Llenar la tabla son $(n+1)(A+1)$ celdas de costo constante, y la
+reconstrucción es $O(n)$. Por lo tanto $T(n) = \Theta(n \cdot A)$. Como
+$A \le \sum_i c_i \le 300n$,
+\[
+  T(n) = O(300\, n^2) = O(n^2).
+\]
+En general el algoritmo es pseudopolinomial en $\Rmax$, pero en este problema
+el presupuesto útil está acotado por $300n$, lo que lo hace polinomial en $n$.
+
+\paragraph{Complejidad en espacio.} Las tablas $M$ y $D$ tienen
+$(n+1)(A+1) \approx n\cdot A \le 300n^2$ celdas, luego el espacio es
+$\Theta(n\cdot A) = O(n^2)$. (La implementación reduce $M$ a una fila, pero
+$D$ sigue siendo de $n \times (A+1)$, por lo que el orden se mantiene.)
+
+\paragraph{¿Es útil en la práctica?} Supongamos un equipo que procesa
+$3\times 10^8$ operaciones por minuto y usa $4$ bytes por celda, con
+$n = 2^k$. Tomamos el peor caso $A = 300n$ (con las aproximaciones
+$n+1\sim n$, $A+1 \sim A$):
+\[
+  \text{operaciones} \approx n\cdot A = 300 n^2 = 300\cdot 4^k
+  \;\Rightarrow\;
+  \text{tiempo} \approx \frac{300\cdot 4^k}{3\times 10^8} = \frac{4^k}{10^6}\ \text{minutos},
+\]
+\[
+  \text{espacio} \approx 4 \cdot 300 n^2 = 1200 \cdot 2^{2k}\ \text{bytes}.
+\]
+Con $1\ \text{año} = 518400$ minutos y $2^{10}$ bytes $= 1$ KB, etc.:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrrr}
+\toprule
+$k$ & $n = 2^k$ & Tiempo & Espacio & Veredicto \\
+\midrule
+5  & 32        & $0.001$ min ($0.06$ s)        & $1.17$ MB  & Aceptable \\
+8  & 256       & $0.066$ min ($3.9$ s)         & $75$ MB    & Aceptable \\
+10 & 1\,024    & $1.05$ min                    & $1.17$ GB  & Aceptable \\
+12 & 4\,096    & $16.8$ min                    & $18.75$ GB & Tiempo aceptable, espacio no \\
+14 & 16\,384   & $268$ min ($4.5$ h)           & $300$ GB   & Inaceptable \\
+16 & 65\,536   & $4\,295$ min ($3$ días)       & $4.69$ TB  & Inaceptable \\
+18 & 262\,144  & $68\,719$ min ($0.13$ años)   & $75$ TB    & Inaceptable \\
+20 & 1\,048\,576 & $1.1\times 10^6$ min ($2.1$ años) & $1.17$ PB & Inaceptable \\
+\bottomrule
+\end{tabular}
+\caption{Tiempo y espacio de la programación dinámica en el peor caso ($A = 300n$).}
+\label{tab:pd-practica}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Tiempo:} es aceptable hasta $k \approx 12$ (unos 17 minutos);
+        $k = 14$ ya toma más de 4 horas y para $k \ge 16$ toma días o años.
+  \item \textbf{Espacio:} es aceptable hasta $k \approx 10$ (un poco más de
+        1 GB, que cabe en la memoria de un computador personal); para
+        $k = 12$ se necesitan casi 19 GB y para $k \ge 14$ cientos de GB o
+        más, lo que es inaceptable. El espacio es el factor que limita
+        primero.
+\end{itemize}
+
+Este es el peor caso, con todos los agentes extremos, poco receptivos y muy
+influyentes, y un $\Rmax$ que alcanza para moderarlos a todos. En las redes
+aleatorias de las pruebas, con $\Rmax$ igual a la mitad del esfuerzo total,
+se obtuvo $A \approx 25n$, doce veces menos. Además, la implementación guarda
+$D$ con 1 bit por celda en lugar de 4 bytes, lo que divide la memoria entre
+32: para $k = 12$ en el peor caso usaría unos $600$ MB. El equipo de prueba
+es también mucho más rápido que el modelo del enunciado: llena unas
+$8\times 10^8$ celdas por segundo (tabla~\ref{tab:tiempos}).
+
+%=====================================================================
+\section{Implementación}
+%=====================================================================
+
+\subsection{Tecnología y estructura}
+
+El programa está escrito en C++17 con Qt 6 (Widgets) para la interfaz y
+CMake para la construcción. La lógica está en una librería
+(\texttt{modex\_core}) que usan tanto la aplicación gráfica (\texttt{ModEx})
+como un programa de pruebas en consola (\texttt{pruebas}).
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+Archivo & Contenido \\
+\midrule
+\texttt{include/agente.hpp}, \texttt{src/agente.cpp} & Clase \texttt{Agente} y generación aleatoria \\
+\texttt{include/red.hpp}, \texttt{src/red.cpp} & Clase \texttt{Red}, $\Ext$, costo, esfuerzo, archivos \\
+\texttt{include/resultado.hpp} & Tripleta $(E, \Esf, \Ext)$ \\
+\texttt{src/estrategias/fuerzabruta.cpp} & \texttt{modexFB} \\
+\texttt{src/estrategias/voraz.cpp} & \texttt{modexV} \\
+\texttt{src/estrategias/dinamica.cpp} & \texttt{modexPD} \\
+\texttt{src/mainwindow.cpp} & Interfaz gráfica \\
+\texttt{pruebas/pruebas.cpp} & Pruebas automáticas y mediciones \\
+\texttt{casos/} & Ejemplos del enunciado en el formato de entrada \\
+\bottomrule
+\end{tabular}
+\caption{Archivos principales del proyecto.}
+\end{table}
+
+Las tres funciones pedidas, \texttt{modexFB}, \texttt{modexV} y
+\texttt{modexPD}, reciben una red (\texttt{const Red\&}) y devuelven un
+\texttt{Resultado} con la estrategia $E$, su esfuerzo y el extremismo de la
+red moderada.
+
+\subsection{Interfaz}
+
+La interfaz permite:
+\begin{itemize}
+  \item \textbf{Abrir} un archivo de entrada y visualizar la red: una tabla
+        con la opinión, la receptividad, la influencia y el costo de moderar
+        a cada agente, además de $n$, $\Rmax$, el esfuerzo de moderar a todos
+        y el extremismo inicial.
+  \item \textbf{Generar casos de prueba} aleatorios con $n$ y $\Rmax$
+        escogidos por el usuario; el caso se guarda en un archivo con el
+        formato de entrada y se carga.
+  \item Ejecutar \textbf{Fuerza bruta}, \textbf{Voraz} o \textbf{Dinámica}, o
+        \textbf{Comparar} las tres (la fuerza bruta solo se habilita para
+        $n \le 25$). Los algoritmos corren en un hilo aparte para no congelar
+        la ventana. La estrategia de cada algoritmo aparece en su propia
+        columna de la tabla de agentes.
+  \item \textbf{Revisar la calidad de las salidas}: una tabla de resultados
+        muestra para cada algoritmo $\Ext$, $\Esf$, si $\Esf \le \Rmax$, si
+        el recálculo de $\Esf$ y $\Ext$ a partir de $E$ coincide con lo
+        reportado, el tiempo de ejecución y si la solución es óptima
+        comparada con la de programación dinámica (y por cuánto difiere si
+        no lo es). Con la columna de costos es fácil comprobar a mano el
+        esfuerzo de una solución.
+  \item \textbf{Guardar la salida} del algoritmo seleccionado en un archivo
+        de texto con el formato pedido.
+\end{itemize}
+
+\subsection{Formatos de entrada y salida}
+
+La entrada tiene $n+2$ líneas: $n$; una línea
+\texttt{op,recep,inf} por agente; y $\Rmax$. El lector acepta como
+separadores comas, punto y coma, espacios y ``\texttt{.~}'' (punto seguido de
+espacio, como aparece en el enunciado), tolera líneas vacías y finales de
+línea de Windows, y valida los rangos ($o_i \in [-100,100]$,
+$r_i \in [0,1]$, $inf_i \in [1,3]$, $\Rmax \ge 0$), informando la línea del
+error. La salida tiene $n+2$ líneas: $\Ext$ (con seis decimales), $\Esf$, y
+un $0$ o $1$ por agente.
+
+%=====================================================================
+\section{Comparación de las tres soluciones}
+%=====================================================================
+
+\subsection{Diseño de los casos de prueba}
+
+Los casos se diseñaron en cuatro grupos:
+\begin{enumerate}
+  \item \textbf{Ejemplos del enunciado} ($E_1$, $E_2$), para validar el
+        cálculo del esfuerzo y del extremismo contra valores conocidos.
+  \item \textbf{Casos borde} ($E_5$, $E_6$, $E_7$): $\Rmax = 0$, presupuesto
+        que alcanza para todos, agentes con receptividad $1$ (costo $0$) y
+        opinión $0$ (beneficio $0$), y valores que exponen errores de
+        redondeo.
+  \item \textbf{Casos adversarios para el voraz} ($E_3$, $E_4$, $E_8$),
+        construidos a partir del análisis de la sección~\ref{sec:voraz-correccion}:
+        presupuesto desperdiciado, agente muy extremo bloqueado por uno
+        barato y óptimos empatados.
+  \item \textbf{Casos aleatorios}, generados con la misma función que usa la
+        interfaz: $o_i$ uniforme en $\{-100,\dots,100\}$, $r_i$ uniforme en
+        $[0,1]$ e $inf_i$ uniforme en $[1,3]$ (con dos decimales), y $\Rmax$
+        uniforme entre $0$ y $\sum_i c_i$ para cubrir desde presupuestos muy
+        escasos hasta suficientes. Se usó una semilla fija para que los
+        resultados sean reproducibles.
+\end{enumerate}
+
+Para cada caso se verifica automáticamente (programa \texttt{pruebas}) que
+las tres salidas sean aplicables, que el esfuerzo y el extremismo reportados
+coincidan con los recalculados a partir de $E$, y que fuerza bruta y
+programación dinámica den el mismo extremismo. Todas las verificaciones
+pasaron; en particular, \textbf{la programación dinámica coincidió con la
+fuerza bruta en los $2000$ casos aleatorios con $n \le 14$} del programa de
+pruebas y en los $3200$ casos con $n \le 20$ de la tabla~\ref{tab:aleatorio}.
+
+\subsection{Resultados en los casos diseñados}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+ & & \multicolumn{2}{c}{Fuerza bruta} & \multicolumn{2}{c}{Voraz} & \multicolumn{2}{c}{Dinámica} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+Caso & Ext inicial & Esf & Ext & Esf & Ext & Esf & Ext \\
+\midrule
+$E_1$ & 47.2582 & 50  & 33.4996 & 50  & 33.4996 & 50  & 33.4996 \\
+$E_2$ & 21.6025 & 28  & 9.4281  & 28  & 9.4281  & 28  & 9.4281 \\
+$E_3$ & 30.9121 & 10  & 20.0000 & 6   & \textbf{23.5702} & 10 & 20.0000 \\
+$E_4$ & 50.9902 & 50  & 10.0000 & 50  & 10.0000 & 50  & 10.0000 \\
+$E_5$ & 33.0246 & 0   & 17.0477 & 0   & 17.0477 & 0   & 17.0477 \\
+$E_6$ & 69.3462 & 328 & 0.0000  & 328 & 0.0000  & 328 & 0.0000 \\
+$E_7$ & 25.4951 & 3   & 25.0000 & 3   & 25.0000 & 3   & 25.0000 \\
+$E_8$ & 32.6803 & 75  & 24.4949 & 75  & 24.4949 & 75  & 24.4949 \\
+\bottomrule
+\end{tabular}
+\caption{Resultados de los tres algoritmos en los casos diseñados.}
+\label{tab:comparacion}
+\end{table}
+
+\subsection{Calidad del voraz en casos aleatorios}
+
+Para $n \le 20$ el óptimo se calculó con fuerza bruta (y se comprobó que la
+dinámica da lo mismo); para $n = 100$ y $n = 1000$ se usó la dinámica. El
+error relativo es $(\Ext_V - \Ext^*)/\Ext^*$, y $B_V/B^*$ es la fracción del
+beneficio óptimo que logra el voraz.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrrrr}
+\toprule
+$n$ & Casos & Voraz óptimo & Error prom. en Ext & Error máx. en Ext & $B_V/B^*$ mín. \\
+\midrule
+5    & 1000 & 88.4\% & 2.47\%  & 206.2\% & 0.729 \\
+10   & 1000 & 71.9\% & 2.75\%  & 105.8\% & 0.794 \\
+15   & 1000 & 61.6\% & 2.24\%  & 147.2\% & 0.778 \\
+20   & 200  & 56.0\% & 1.97\%  & 60.2\%  & 0.888 \\
+100  & 200  & 27.5\% & 0.21\%  & 3.09\%  & 0.982 \\
+1000 & 200  & 17.5\% & 0.005\% & 0.12\%  & 0.997 \\
+\bottomrule
+\end{tabular}
+\caption{Calidad del algoritmo voraz en redes aleatorias.}
+\label{tab:aleatorio}
+\end{table}
+
+Se observa que:
+\begin{itemize}
+  \item El voraz siempre logró al menos el $72.9\%$ del beneficio óptimo,
+        por encima de la garantía teórica del $50\%$.
+  \item La probabilidad de obtener el óptimo exacto baja al crecer $n$, pero
+        el error relativo cae rápidamente: para $n = 1000$ el extremismo del
+        voraz difiere en promedio un $0.005\%$ del óptimo.
+  \item Los errores máximos grandes en $\Ext$ aparecen en redes pequeñas
+        donde el óptimo deja un extremismo cercano a $0$, de modo que una
+        diferencia absoluta pequeña es grande en términos relativos.
+\end{itemize}
+
+\subsection{Tiempos de ejecución}
+
+Las mediciones se hicieron en un Intel Core i7-1165G7 a 2.8 GHz con
+compilación optimizada (\texttt{-O2}), con $\Rmax$ igual a la mitad del
+esfuerzo de moderar a todos.
+
+\begin{table}[h]
+\centering
+\begin{minipage}{0.38\textwidth}
+\centering
+\begin{tabular}{rr}
+\toprule
+$n$ & FB (ms) \\
+\midrule
+4  & 0.002 \\
+8  & 0.035 \\
+12 & 0.746 \\
+16 & 12.9 \\
+18 & 61.0 \\
+20 & 296.7 \\
+22 & 1\,203.3 \\
+24 & 4\,403.7 \\
+\bottomrule
+\end{tabular}
+\end{minipage}%
+\begin{minipage}{0.58\textwidth}
+\centering
+\begin{tabular}{rrrr}
+\toprule
+$n$ & $A$ & Voraz (ms) & Dinámica (ms) \\
+\midrule
+10   & 267       & 0.0006 & 0.005 \\
+20   & 554       & 0.0007 & 0.020 \\
+100  & 2\,604    & 0.0034 & 0.417 \\
+500  & 11\,874   & 0.018  & 8.61 \\
+1000 & 26\,583   & 0.059  & 36.7 \\
+2000 & 52\,536   & 0.142  & 130.2 \\
+5000 & 126\,149  & 0.450  & 788.6 \\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\caption{Tiempos de ejecución medidos.}
+\label{tab:tiempos}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{loglogaxis}[
+  width=0.85\textwidth, height=7cm,
+  xlabel={$n$}, ylabel={tiempo (ms)},
+  legend pos=north west, grid=major,
+  xmin=3, xmax=8000
+]
+\addplot[mark=*,red] coordinates {
+  (4,0.0022) (8,0.0347) (12,0.746) (16,12.86) (18,60.97) (20,296.7) (22,1203.3) (24,4403.7)
+};
+\addlegendentry{Fuerza bruta}
+\addplot[mark=square*,blue] coordinates {
+  (10,0.0049) (20,0.0197) (100,0.4169) (500,8.6118) (1000,36.652) (2000,130.17) (5000,788.61)
+};
+\addlegendentry{Dinámica}
+\addplot[mark=triangle*,green!50!black] coordinates {
+  (10,0.0006) (20,0.0007) (100,0.0034) (500,0.0181) (1000,0.059) (2000,0.1424) (5000,0.4503)
+};
+\addlegendentry{Voraz}
+\end{loglogaxis}
+\end{tikzpicture}
+\caption{Tiempos de ejecución en escala logarítmica.}
+\label{fig:tiempos}
+\end{figure}
+
+Los tiempos confirman el análisis: la fuerza bruta se multiplica por algo
+más de $2$ con cada agente adicional ($\Theta(n\cdot 2^n)$); la dinámica
+crece aproximadamente con el cuadrado de $n$ (al pasar de $n=1000$ a
+$n=2000$ el tiempo se multiplica por $3.6$, y $A$ crece linealmente con $n$);
+el voraz es casi lineal. Extrapolando, la fuerza bruta tardaría unos $6$
+minutos con $n = 30$, unos $6$ días con $n = 40$ y unos $20$ años con $n = 50$,
+mientras que la dinámica resuelve $n = 5000$ en menos de un segundo.
+
+%=====================================================================
+\section{Conclusiones}
+%=====================================================================
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+ & Fuerza bruta & Voraz & Dinámica \\
+\midrule
+Tiempo  & $\Theta(n\cdot 2^n)$ & $\Theta(n\log n)$ & $\Theta(n\cdot A) = O(n^2)$ \\
+Espacio & $\Theta(n)$ & $\Theta(n)$ & $\Theta(n\cdot A) = O(n^2)$ \\
+¿Óptimo? & Siempre & No siempre ($\ge 1/2$ de $B^*$) & Siempre \\
+Tamaño práctico & $n \lesssim 25$ & Millones de agentes & Miles de agentes \\
+\bottomrule
+\end{tabular}
+\caption{Resumen de las tres estrategias.}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Fuerza bruta.} Su ventaja es la simplicidad y la certeza: es
+        fácil de implementar y de demostrar correcta, y sirve como referencia
+        para validar los otros algoritmos (así se usó en las pruebas). Su
+        desventaja es el crecimiento exponencial, que la hace inútil más allá
+        de unos 25 agentes.
+  \item \textbf{Voraz.} Es, por mucho, el más rápido, con un costo dominado
+        por un ordenamiento, y usa memoria lineal. En la práctica sus
+        soluciones son muy buenas, y con muchos agentes casi indistinguibles
+        del óptimo. Su desventaja es que no garantiza el óptimo: existen
+        entradas pequeñas donde se equivoca, y solo garantiza la mitad del
+        beneficio óptimo. Es la mejor opción cuando la red es muy grande o
+        se necesita una respuesta inmediata y se tolera un error pequeño.
+  \item \textbf{Programación dinámica.} Garantiza el óptimo en tiempo
+        polinomial gracias a que el presupuesto útil está acotado por $300n$,
+        y resolvió miles de agentes en menos de un segundo. Su desventaja es
+        la memoria: la tabla de decisiones crece como $n^2$ y es el primer
+        recurso que se agota (alrededor de $n \approx 2^{10}$ a $2^{12}$ con
+        4 bytes por celda). Es la mejor opción cuando se necesita la solución
+        exacta y la red tiene hasta algunos miles de agentes.
+  \item Reconocer que ModEx es una mochila 0/1 fue clave: explica por qué el
+        voraz por razón falla, de dónde sale su garantía, y cuál es la
+        subestructura óptima que aprovecha la programación dinámica.
+\end{itemize}
+
+\end{document}
