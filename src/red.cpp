@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -83,18 +84,22 @@ std::vector<std::string> campos(std::string linea) {
 }
 
 long long entero(const std::string& texto) {
-    std::size_t usados = 0;
-    long long valor = std::stoll(texto, &usados);
-    if (usados != texto.size()) {
+    std::istringstream flujo(texto);
+    flujo.imbue(std::locale::classic());
+    long long valor = 0;
+    char extra = '\0';
+    if (!(flujo >> valor) || (flujo >> extra)) {
         throw std::invalid_argument(texto);
     }
     return valor;
 }
 
 double real(const std::string& texto) {
-    std::size_t usados = 0;
-    double valor = std::stod(texto, &usados);
-    if (usados != texto.size() || !std::isfinite(valor)) {
+    std::istringstream flujo(texto);
+    flujo.imbue(std::locale::classic());
+    double valor = 0.0;
+    char extra = '\0';
+    if (!(flujo >> valor) || (flujo >> extra) || !std::isfinite(valor)) {
         throw std::invalid_argument(texto);
     }
     return valor;
